@@ -1,0 +1,267 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { queryGet } from '@/lib/database/sqlite'
+
+export const dynamic = 'force-dynamic'
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+
+// ─── Binary / corrupt content detection ──────────────────────────────────────
+
+function isBinaryContent(text: string): boolean {
+  const sample = text.slice(0, 200)
+  let nonPrintable = 0
+  for (let i = 0; i < sample.length; i++) {
+    const code = sample.charCodeAt(i)
+    if (code < 9 || (code > 13 && code < 32) || code === 65533) nonPrintable++
+  }
+  return nonPrintable / sample.length > 0.1
+}
+
+function isRawPdfMarkup(text: string): boolean {
+  const trimmed = text.trimStart()
+  return trimmed.startsWith('%PDF-') && /\bendobj\b/.test(text.slice(0, 1000))
+}
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { documentId, message } = body
+
+    if (!documentId || !message) {
+      return NextResponse.json(
+        { error: 'documentId and message are required' },
+        { status: 400 }
+      )
+    }
+
+    // Fetch document from SQLite
+    const doc = await queryGet('SELECT * FROM documents WHERE id = ?', [documentId])
+    if (!doc) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+    }
+
+    const content: string = doc.content || ''
+
+    // Guard: empty content
+    if (!content.trim()) {
+      return NextResponse.json({
+        answer: `The document **${doc.file_name}** does not appear to contain extractable text. Please re-upload the file.`,
+        sources: [],
+      })
+    }
+
+    // Guard: corrupted binary / raw PDF markup
+    if (isBinaryContent(content) || isRawPdfMarkup(content)) {
+      return NextResponse.json({
+        answer: `⚠️ **${doc.file_name}** could not be read correctly — the file content was not properly extracted during upload. Please **delete and re-upload** this document.`,
+        sources: [],
+      })
+    }
+
+    // ── Call Python FAISS backend ──────────────────────────────────────────────
+    try {
+      const backendResp = await fetch(`${BACKEND_URL}/api/rag/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document_id: documentId,
+          message,
+          file_name: doc.file_name,
+          // Pass full content so the backend can index on-the-fly if the index is missing
+          content,
+        }),
+        signal: AbortSignal.timeout(45_000), // embedding + LLM can take time
+      })
+
+      if (backendResp.ok) {
+        const data = await backendResp.json()
+        return NextResponse.json({
+          answer: data.answer,
+          sources: (data.sources || []).map((s: { file_name: string; snippet: string; score: number }) => ({
+            file_name: s.file_name,
+            snippet: s.snippet,
+            score: s.score,
+          })),
+        })
+      }
+
+      // Backend returned an error status
+      const errBody = await backendResp.json().catch(() => ({}))
+      console.error('[RAG backend] error:', backendResp.status, errBody)
+      // Fall through to local fallback below
+    } catch (backendErr) {
+      console.warn('[RAG backend] unreachable — using local BM25 fallback:', (backendErr as Error).message)
+      // Fall through to local fallback
+    }
+
+    // ── Local BM25 fallback (when Python backend is down) ─────────────────────
+    return await localBm25Fallback(doc, content, message)
+  } catch (err: any) {
+    console.error('RAG chat error:', err)
+    return NextResponse.json(
+      { error: err.message || 'Failed to process RAG chat' },
+      { status: 500 }
+    )
+  }
+}
+
+// ─── Local BM25 fallback (no Python backend required) ────────────────────────
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to',
+  'for', 'of', 'with', 'by', 'from', 'about', 'into', 'through', 'after', 'before',
+  'what', 'where', 'when', 'who', 'whom', 'which', 'why', 'how', 'can', 'could', 'should',
+  'would', 'will', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'you', 'he', 'she',
+  'it', 'we', 'they', 'my', 'your', 'his', 'her', 'their', 'our', 'this', 'that', 'these',
+  'those', 'be', 'been', 'being', 'me', 'us', 'him', 'them', 'tell', 'explain', 'give',
+])
+
+function extractKeywords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w))
+}
+
+function chunkText(text: string): string[] {
+  const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+  const chunks: string[] = []
+  for (const para of paragraphs) {
+    if (para.length <= 500) {
+      chunks.push(para)
+    } else {
+      const lines = para.split('\n').map((l) => l.trim()).filter(Boolean)
+      let cur = ''
+      for (const l of lines) {
+        if ((cur + '\n' + l).length > 400 && cur.length > 0) {
+          chunks.push(cur.trim())
+          cur = l
+        } else {
+          cur += '\n' + l
+        }
+      }
+      if (cur.trim()) chunks.push(cur.trim())
+    }
+  }
+  if (chunks.length === 0) chunks.push(text)
+  return chunks
+}
+
+/** Fallback scoring + Groq LLM generation */
+async function localBm25Fallback(
+  doc: { file_name: string },
+  content: string,
+  message: string
+) {
+  const chunks = chunkText(content)
+  const keywords = extractKeywords(message)
+  const lowerMsg = message.toLowerCase()
+
+  const scored = chunks.map((chunk, idx) => {
+    const lowerChunk = chunk.toLowerCase()
+    let score = 0
+
+    // Exact phrase bonus
+    if (lowerMsg.length > 5 && lowerChunk.includes(lowerMsg)) score += 100
+
+    // Bigram bonus
+    const words = lowerMsg.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(Boolean)
+    for (let i = 0; i < words.length - 1; i++) {
+      const bigram = `${words[i]} ${words[i + 1]}`
+      if (bigram.length > 4 && !STOP_WORDS.has(words[i]) && lowerChunk.includes(bigram)) {
+        score += 30
+      }
+    }
+
+    // TF keyword scoring
+    for (const kw of keywords) {
+      const tf = (lowerChunk.match(new RegExp(kw, 'g')) || []).length
+      if (tf > 0) score += 10 + Math.min(tf * 5, 20)
+    }
+
+    // Keyword semantic boosts for common questions
+    if ((lowerMsg.includes('duration') || lowerMsg.includes('time') || lowerMsg.includes('how long')) &&
+        (lowerChunk.includes('week') || lowerChunk.includes('month') || lowerChunk.includes('hour') || lowerChunk.includes('duration'))) {
+      score += 50
+    }
+
+    return { chunk, idx, score }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  const topChunks = scored.slice(0, 4).filter(c => c.score > 0)
+  const selectedChunks = topChunks.length > 0 ? topChunks : [scored[0]]
+  const best = selectedChunks[0]
+
+  // If GROQ_API_KEY is configured, use Groq Llama 3.1 for intelligent answer generation
+  const groqKey = process.env.GROQ_API_KEY
+  if (groqKey && !groqKey.startsWith('your_') && groqKey.length > 10) {
+    try {
+      // If content is small (< 15k chars), pass entire document context to ensure 100% accurate answers
+      const contextText = content.length < 15000
+        ? content
+        : selectedChunks.map((c, i) => `[Excerpt ${i + 1}]:\n${c.chunk}`).join('\n\n')
+
+      const prompt = `You are the GenZ Mind AI Document Assistant.
+Answer the user's question accurately, concisely, and strictly based on the following document context from "${doc.file_name}".
+If the information is in the document, answer directly with the exact facts, numbers, dates, durations, and details.
+Do not hallucinate facts that are not present.
+
+Document Context:
+"""
+${contextText}
+"""
+
+User Question: ${message}
+
+Helpful Answer:`
+
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: 'groq/compound-mini',
+          messages: [
+            { role: 'system', content: 'You are an accurate, helpful AI document tutor. Answer based strictly on the provided document context.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.1,
+          max_tokens: 600,
+        }),
+      })
+
+      if (res.ok) {
+        const groqData = await res.json()
+        const aiAnswer = groqData.choices?.[0]?.message?.content
+        if (aiAnswer) {
+          return NextResponse.json({
+            answer: aiAnswer,
+            sources: selectedChunks.map(c => ({
+              file_name: doc.file_name,
+              snippet: c.chunk.slice(0, 160) + '...',
+              score: c.score,
+            })),
+          })
+        }
+      }
+    } catch (llmErr) {
+      console.error('Groq LLM call error in fallback:', llmErr)
+    }
+  }
+
+  const answer = best && best.score > 0
+    ? `According to **${doc.file_name}**:\n\n${best.chunk.trim()}`
+    : `I searched **${doc.file_name}** but could not find a direct answer to "${message}".\n\nHere is an excerpt from the document:\n\n> "${best?.chunk?.slice(0, 300).trim()}..."`
+
+  return NextResponse.json({
+    answer,
+    sources: [{ file_name: doc.file_name, snippet: best?.chunk?.slice(0, 150) + '...', score: 0 }],
+  })
+}
+
