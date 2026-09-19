@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { queryGet } from '@/lib/database/sqlite'
+import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,9 +36,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Fetch document from SQLite
-    const doc = await queryGet('SELECT * FROM documents WHERE id = ?', [documentId])
-    if (!doc) {
+    // Fetch document from Supabase
+    const supabase = await createClient()
+    const { data: doc, error } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single()
+
+    if (error || !doc) {
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
@@ -69,10 +75,9 @@ export async function POST(request: NextRequest) {
           document_id: documentId,
           message,
           file_name: doc.file_name,
-          // Pass full content so the backend can index on-the-fly if the index is missing
           content,
         }),
-        signal: AbortSignal.timeout(45_000), // embedding + LLM can take time
+        signal: AbortSignal.timeout(45_000),
       })
 
       if (backendResp.ok) {
@@ -87,13 +92,10 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Backend returned an error status
       const errBody = await backendResp.json().catch(() => ({}))
       console.error('[RAG backend] error:', backendResp.status, errBody)
-      // Fall through to local fallback below
     } catch (backendErr) {
       console.warn('[RAG backend] unreachable — using local BM25 fallback:', (backendErr as Error).message)
-      // Fall through to local fallback
     }
 
     // ── Local BM25 fallback (when Python backend is down) ─────────────────────
@@ -164,10 +166,8 @@ async function localBm25Fallback(
     const lowerChunk = chunk.toLowerCase()
     let score = 0
 
-    // Exact phrase bonus
     if (lowerMsg.length > 5 && lowerChunk.includes(lowerMsg)) score += 100
 
-    // Bigram bonus
     const words = lowerMsg.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(Boolean)
     for (let i = 0; i < words.length - 1; i++) {
       const bigram = `${words[i]} ${words[i + 1]}`
@@ -176,13 +176,11 @@ async function localBm25Fallback(
       }
     }
 
-    // TF keyword scoring
     for (const kw of keywords) {
       const tf = (lowerChunk.match(new RegExp(kw, 'g')) || []).length
       if (tf > 0) score += 10 + Math.min(tf * 5, 20)
     }
 
-    // Keyword semantic boosts for common questions
     if ((lowerMsg.includes('duration') || lowerMsg.includes('time') || lowerMsg.includes('how long')) &&
         (lowerChunk.includes('week') || lowerChunk.includes('month') || lowerChunk.includes('hour') || lowerChunk.includes('duration'))) {
       score += 50
@@ -196,20 +194,15 @@ async function localBm25Fallback(
   const selectedChunks = topChunks.length > 0 ? topChunks : [scored[0]]
   const best = selectedChunks[0]
 
-  // If GROQ_API_KEY is configured, use Groq for intelligent answer generation
-  // RAG_GROQ_KEY is isolated from any stale system GROQ_API_KEY env override
   let groqKey = process.env.RAG_GROQ_KEY || process.env.GROQ_API_KEY || ''
-  // Strip stale 'her' prefix that may be present in system env var
   if (groqKey.startsWith('hergsk_')) {
     groqKey = groqKey.slice(3)
   }
   console.log('[RAG fallback] GROQ key valid:', groqKey.startsWith('gsk_'), '| length:', groqKey.length)
 
   if (groqKey && groqKey.startsWith('gsk_') && groqKey.length > 10) {
-    // Models to try in order — all confirmed available on this Groq key
     const modelsToTry = ['openai/gpt-oss-20b', 'groq/compound-mini']
 
-    // If content is small (< 15k chars), pass entire document; otherwise pass top chunks
     const contextText = content.length < 15000
       ? content
       : selectedChunks.map((c, i) => `[Excerpt ${i + 1}]:\n${c.chunk}`).join('\n\n')
@@ -282,4 +275,3 @@ Helpful Answer:`
     sources: [{ file_name: doc.file_name, snippet: best?.chunk?.slice(0, 150) + '...', score: 0 }],
   })
 }
-

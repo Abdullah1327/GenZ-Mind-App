@@ -66,9 +66,14 @@ export default function SignUpPage() {
 
       if (error) throw error
 
-      if (data.user) {
+      if (data.user && data.session) {
+        // Email confirmation is disabled — user is immediately active
         toast.success('Account created successfully! Welcome to GenZ Mind 🎉')
         router.push('/student/dashboard')
+      } else if (data.user && !data.session) {
+        // Email confirmation is enabled — user must verify their email first
+        toast.success('Account created! Please check your email to confirm your account, then sign in.')
+        router.push('/auth/signin')
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.'

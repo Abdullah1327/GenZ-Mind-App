@@ -132,7 +132,7 @@ export default function StudentDocumentsPage() {
   const handleDeleteDoc = async (docId: string) => {
     try {
       const supabase = createClient()
-      await supabase.from('documents').eq('id', docId).delete()
+      await supabase.from('documents').delete().eq('id', docId)
       setDocuments((prev) => prev.filter((d) => d.id !== docId))
       if (selectedDoc?.id === docId) {
         setSelectedDoc(null)

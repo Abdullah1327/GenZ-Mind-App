@@ -76,7 +76,7 @@ export default function InstructorContentPage() {
   const handleDeleteQuiz = async (quizId: string) => {
     try {
       const supabase = createClient()
-      await supabase.from('quizzes').eq('id', quizId).delete()
+      await supabase.from('quizzes').delete().eq('id', quizId)
       setQuizzes((prev) => prev.filter((q) => q.id !== quizId))
       toast.success('Quiz deleted from curriculum')
     } catch (e) {
@@ -115,7 +115,7 @@ export default function InstructorContentPage() {
   const handleDeleteAssignment = async (asgId: string) => {
     try {
       const supabase = createClient()
-      await supabase.from('assignments').eq('id', asgId).delete()
+      await supabase.from('assignments').delete().eq('id', asgId)
       setAssignments((prev) => prev.filter((a) => a.id !== asgId))
       toast.success('Assignment deleted from curriculum')
     } catch (e) {

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS public.quizzes (
   quiz_type            TEXT NOT NULL CHECK (quiz_type IN ('mcq', 'true_false', 'short_answer', 'mixed')),
   number_of_questions  INT NOT NULL,
   questions            JSONB NOT NULL DEFAULT '[]',
+  google_form_url      TEXT,                 -- Optional linked Google Form
   created_at           TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -119,6 +120,7 @@ CREATE TABLE IF NOT EXISTS public.documents (
   file_name   TEXT NOT NULL,
   file_type   TEXT NOT NULL,
   file_path   TEXT NOT NULL,
+  content     TEXT,                          -- Extracted plain-text for RAG
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 

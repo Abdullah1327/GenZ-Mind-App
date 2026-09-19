@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { queryAll } from '@/lib/database/sqlite'
 import { FileQuestion, BookOpen, Activity, ArrowRight, PlusCircle, Clock, Users, ExternalLink } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -31,30 +30,39 @@ export default async function InstructorDashboardPage() {
     .select('*', { count: 'exact', head: true })
     .eq('instructor_id', user.id)
 
-  // Fetch student responses submitted for instructor's quizzes
-  let studentResponses: any[] = []
-  try {
-    const responsesSql = `
-      SELECT qr.id, qr.quiz_id, qr.student_id, qr.score, qr.total_questions, qr.percentage, qr.completed_at,
-             q.topic as quiz_topic, q.course as quiz_course, q.google_form_url,
-             p.full_name as student_name, p.email as student_email
-      FROM quiz_results qr
-      JOIN quizzes q ON qr.quiz_id = q.id
-      LEFT JOIN profiles p ON qr.student_id = p.id
-      WHERE q.user_id = ?
-      ORDER BY qr.completed_at DESC
-    `
-    studentResponses = await queryAll(responsesSql, [user.id])
-  } catch (e) {
-    console.error('Failed to fetch student responses:', e)
-  }
+  // Fetch student responses submitted for instructor's quizzes via Supabase
+  // We join quiz_results → quizzes → profiles using Supabase's nested select
+  const { data: studentResponses } = await supabase
+    .from('quiz_results')
+    .select(`
+      id, quiz_id, student_id, score, total_questions, percentage, completed_at,
+      quizzes!inner (topic, course, google_form_url, user_id),
+      profiles (full_name, email)
+    `)
+    .eq('quizzes.user_id', user.id)
+    .order('completed_at', { ascending: false })
 
-  const firstName = profile?.full_name?.split(' ')[0] || 'Instructor'
+  const responses = (studentResponses || []).map((r: any) => ({
+    id: r.id,
+    quiz_id: r.quiz_id,
+    student_id: r.student_id,
+    score: r.score,
+    total_questions: r.total_questions,
+    percentage: r.percentage,
+    completed_at: r.completed_at,
+    quiz_topic: r.quizzes?.topic,
+    quiz_course: r.quizzes?.course,
+    google_form_url: r.quizzes?.google_form_url,
+    student_name: r.profiles?.full_name || 'Student',
+    student_email: r.profiles?.email || 'No email',
+  }))
+
+  const firstName = profile?.full_name?.split(' ')[0] || user.user_metadata?.full_name?.split(' ')[0] || 'Instructor'
 
   const stats = [
     { label: 'Quizzes Generated', value: quizCount ?? 0, icon: FileQuestion, color: 'text-indigo-600', bg: 'bg-indigo-50' },
     { label: 'Assignments Generated', value: assignmentCount ?? 0, icon: BookOpen, color: 'text-purple-600', bg: 'bg-purple-50' },
-    { label: 'Student Responses', value: studentResponses.length, icon: Users, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'Student Responses', value: responses.length, icon: Users, color: 'text-amber-600', bg: 'bg-amber-50' },
     { label: 'Total Content', value: (quizCount ?? 0) + (assignmentCount ?? 0), icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   ]
 
@@ -99,7 +107,7 @@ export default async function InstructorDashboardPage() {
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Student Quiz Responses & Google Form Submissions
+                Student Quiz Responses &amp; Google Form Submissions
               </h2>
               <p className="text-xs text-slate-500">
                 Live responses received from students via shared quiz links and Google Forms.
@@ -107,11 +115,11 @@ export default async function InstructorDashboardPage() {
             </div>
           </div>
           <span className="text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full w-fit">
-            {studentResponses.length} Submissions Received
+            {responses.length} Submissions Received
           </span>
         </div>
 
-        {studentResponses.length === 0 ? (
+        {responses.length === 0 ? (
           <div className="text-center py-8 text-xs text-slate-500 space-y-2">
             <p>No student submissions received yet.</p>
             <p className="text-slate-400">
@@ -122,7 +130,7 @@ export default async function InstructorDashboardPage() {
                 href="/instructor/quiz"
                 className="inline-flex items-center gap-1.5 text-xs font-semibold text-white gradient-bg px-3.5 py-1.5 rounded-lg shadow-sm"
               >
-                <PlusCircle className="w-3.5 h-3.5" /> Create & Share Quiz
+                <PlusCircle className="w-3.5 h-3.5" /> Create &amp; Share Quiz
               </Link>
             </div>
           </div>
@@ -139,13 +147,13 @@ export default async function InstructorDashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {studentResponses.map((res: any) => {
+                {responses.map((res: any) => {
                   const isPassing = (res.percentage || 0) >= 70
                   return (
                     <tr key={res.id} className="hover:bg-slate-50/60 transition-colors">
                       <td className="py-3 px-3">
-                        <p className="font-bold text-slate-900">{res.student_name || 'Student'}</p>
-                        <p className="text-[11px] text-slate-400">{res.student_email || 'No email'}</p>
+                        <p className="font-bold text-slate-900">{res.student_name}</p>
+                        <p className="text-[11px] text-slate-400">{res.student_email}</p>
                       </td>
                       <td className="py-3 px-3">
                         <span className="font-semibold text-slate-800">{res.quiz_topic}</span>
@@ -163,7 +171,8 @@ export default async function InstructorDashboardPage() {
                         </span>
                       </td>
                       <td className="py-3 px-3 text-slate-500">
-                        {new Date(res.completed_at).toLocaleDateString()} {new Date(res.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(res.completed_at).toLocaleDateString()}{' '}
+                        {new Date(res.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </td>
                       <td className="py-3 px-3 text-right">
                         {res.google_form_url ? (

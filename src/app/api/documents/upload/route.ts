@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { queryRun, queryGet } from '@/lib/database/sqlite'
+import { createClient } from '@/lib/supabase/server'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +21,7 @@ async function indexInFaiss(docId: string, content: string, fileName: string): P
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ document_id: docId, content, file_name: fileName }),
-      signal: AbortSignal.timeout(30_000), // 30s — embedding can take a moment
+      signal: AbortSignal.timeout(30_000),
     })
     if (!resp.ok) {
       const err = await resp.text()
@@ -31,7 +31,6 @@ async function indexInFaiss(docId: string, content: string, fileName: string): P
       console.log(`[FAISS index] ${docId} indexed — ${data.chunks_created} chunks`)
     }
   } catch (err) {
-    // Backend may not be running yet; indexing will happen on-the-fly at chat time
     console.warn(`[FAISS index] Backend unavailable for ${docId}:`, (err as Error).message)
   }
 }
@@ -40,7 +39,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File | null
-    const userId = (formData.get('userId') as string) || 'anonymous'
+    const userId = (formData.get('userId') as string) || ''
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -59,7 +58,6 @@ export async function POST(request: NextRequest) {
         const pdf = require('pdf-parse')
         const data = await pdf(buffer)
         const parsed = (data.text || '').trim()
-        // Sanity check: pdf-parse sometimes returns raw PDF markup instead of text
         if (parsed && !parsed.startsWith('%PDF-')) {
           extractedText = parsed
         } else {
@@ -85,7 +83,6 @@ export async function POST(request: NextRequest) {
         )
       }
     } else {
-      // Plain text files: TXT, MD, CSV, JSON, etc.
       try {
         extractedText = buffer.toString('utf-8')
       } catch {
@@ -96,25 +93,30 @@ export async function POST(request: NextRequest) {
     // Normalise whitespace
     extractedText = extractedText.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 
-    let validUserId = userId
-    const profile = await queryGet('SELECT id FROM profiles WHERE id = ?', [userId])
-    if (!profile) {
-      const defaultProfile = await queryGet('SELECT id FROM profiles LIMIT 1')
-      if (defaultProfile) {
-        validUserId = defaultProfile.id
-      }
-    }
-
     const docId = `doc-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
     const filePath = `/uploads/${fileName}`
     const createdAt = new Date().toISOString()
 
-    await queryRun(
-      'INSERT INTO documents (id, user_id, file_name, file_type, file_path, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [docId, validUserId, fileName, fileType, filePath, extractedText, createdAt]
-    )
+    // Save document metadata + content to Supabase
+    const supabase = await createClient()
+    const { error: insertError } = await supabase
+      .from('documents')
+      .insert({
+        id: docId,
+        user_id: userId || undefined,
+        file_name: fileName,
+        file_type: fileType,
+        file_path: filePath,
+        content: extractedText,
+        created_at: createdAt,
+      })
 
-    // Kick off FAISS indexing in the background (non-blocking — upload succeeds regardless)
+    if (insertError) {
+      console.error('Supabase insert error:', insertError)
+      return NextResponse.json({ error: insertError.message || 'Failed to save document' }, { status: 500 })
+    }
+
+    // Kick off FAISS indexing in the background (non-blocking)
     indexInFaiss(docId, extractedText, fileName).catch(() => { /* already logged inside */ })
 
     return NextResponse.json({

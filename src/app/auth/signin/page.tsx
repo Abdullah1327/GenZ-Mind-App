@@ -51,8 +51,8 @@ export default function SignInPage() {
       if (error) throw error
 
       if (data.user) {
-        // Role is returned directly in the session user object
-        const role = (data.user as any).role || 'student'
+        // Role is stored in user_metadata (set during sign-up via options.data)
+        const role = data.user.user_metadata?.role || 'student'
         toast.success('Welcome back! 👋')
 
         if (role === 'instructor') {
