@@ -51,16 +51,11 @@ export default function SignInPage() {
       if (error) throw error
 
       if (data.user) {
-        // Fetch profile to get role
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .single()
-
+        // Role is returned directly in the session user object
+        const role = (data.user as any).role || 'student'
         toast.success('Welcome back! 👋')
 
-        if (profile?.role === 'instructor') {
+        if (role === 'instructor') {
           router.push('/instructor/dashboard')
         } else {
           router.push('/student/dashboard')
@@ -97,6 +92,7 @@ export default function SignInPage() {
             id="signin-email"
             name="email"
             type="email"
+            autoComplete="email"
             value={form.email}
             onChange={handleChange}
             placeholder="you@example.com"
@@ -115,15 +111,13 @@ export default function SignInPage() {
             <label htmlFor="signin-password" className="block text-sm font-medium text-slate-700">
               Password
             </label>
-            <a href="#" className="text-xs text-indigo-600 hover:underline">
-              Forgot password?
-            </a>
           </div>
           <div className="relative">
             <input
               id="signin-password"
               name="password"
               type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
               value={form.password}
               onChange={handleChange}
               placeholder="Enter your password"
@@ -155,10 +149,13 @@ export default function SignInPage() {
           {loading ? 'Signing In...' : 'Sign In'}
         </button>
 
-        {/* Demo hint */}
-        <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
-          <p className="text-xs text-indigo-700 text-center">
-            🚀 New here? <Link href="/auth/signup" className="font-semibold underline">Create a free account</Link> to get started.
+        {/* Info box */}
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+          <p className="text-xs text-slate-500 text-center font-medium">
+            🎓 Students — <Link href="/auth/signup" className="text-indigo-600 underline">create a free account</Link> to get started
+          </p>
+          <p className="text-xs text-slate-400 text-center">
+            👨‍🏫 Instructors use their designated credentials to sign in
           </p>
         </div>
       </form>

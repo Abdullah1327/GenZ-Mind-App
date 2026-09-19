@@ -81,7 +81,7 @@ def _groq_answer(
         f"Be direct and helpful. Use bullet points or numbered lists where appropriate."
     )
 
-    models_to_try = ["groq/compound-mini", "openai/gpt-oss-20b", "llama-3.1-8b-instant"]
+    models_to_try = ["openai/gpt-oss-20b", "groq/compound-mini"]
 
     with httpx.Client(timeout=30) as client:
         for model in models_to_try:

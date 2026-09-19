@@ -196,19 +196,28 @@ async function localBm25Fallback(
   const selectedChunks = topChunks.length > 0 ? topChunks : [scored[0]]
   const best = selectedChunks[0]
 
-  // If GROQ_API_KEY is configured, use Groq Llama 3.1 for intelligent answer generation
-  const groqKey = process.env.GROQ_API_KEY
-  if (groqKey && !groqKey.startsWith('your_') && groqKey.length > 10) {
-    try {
-      // If content is small (< 15k chars), pass entire document context to ensure 100% accurate answers
-      const contextText = content.length < 15000
-        ? content
-        : selectedChunks.map((c, i) => `[Excerpt ${i + 1}]:\n${c.chunk}`).join('\n\n')
+  // If GROQ_API_KEY is configured, use Groq for intelligent answer generation
+  // RAG_GROQ_KEY is isolated from any stale system GROQ_API_KEY env override
+  let groqKey = process.env.RAG_GROQ_KEY || process.env.GROQ_API_KEY || ''
+  // Strip stale 'her' prefix that may be present in system env var
+  if (groqKey.startsWith('hergsk_')) {
+    groqKey = groqKey.slice(3)
+  }
+  console.log('[RAG fallback] GROQ key valid:', groqKey.startsWith('gsk_'), '| length:', groqKey.length)
 
-      const prompt = `You are the GenZ Mind AI Document Assistant.
+  if (groqKey && groqKey.startsWith('gsk_') && groqKey.length > 10) {
+    // Models to try in order — all confirmed available on this Groq key
+    const modelsToTry = ['openai/gpt-oss-20b', 'groq/compound-mini']
+
+    // If content is small (< 15k chars), pass entire document; otherwise pass top chunks
+    const contextText = content.length < 15000
+      ? content
+      : selectedChunks.map((c, i) => `[Excerpt ${i + 1}]:\n${c.chunk}`).join('\n\n')
+
+    const prompt = `You are the GenZ Mind AI Document Assistant.
 Answer the user's question accurately, concisely, and strictly based on the following document context from "${doc.file_name}".
-If the information is in the document, answer directly with the exact facts, numbers, dates, durations, and details.
-Do not hallucinate facts that are not present.
+If the information is in the document, answer directly with the exact facts, code examples, steps, and details.
+Do not make up information that is not present in the document.
 
 Document Context:
 """
@@ -219,39 +228,48 @@ User Question: ${message}
 
 Helpful Answer:`
 
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${groqKey}`,
-        },
-        body: JSON.stringify({
-          model: 'groq/compound-mini',
-          messages: [
-            { role: 'system', content: 'You are an accurate, helpful AI document tutor. Answer based strictly on the provided document context.' },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.1,
-          max_tokens: 600,
-        }),
-      })
+    for (const model of modelsToTry) {
+      try {
+        console.log(`[RAG fallback] Trying Groq model: ${model}`)
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${groqKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: 'You are an accurate, helpful AI document tutor. Answer based strictly on the provided document context. If the document contains code examples, include them.' },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.1,
+            max_tokens: 800,
+          }),
+          signal: AbortSignal.timeout(25_000),
+        })
 
-      if (res.ok) {
-        const groqData = await res.json()
-        const aiAnswer = groqData.choices?.[0]?.message?.content
-        if (aiAnswer) {
-          return NextResponse.json({
-            answer: aiAnswer,
-            sources: selectedChunks.map(c => ({
-              file_name: doc.file_name,
-              snippet: c.chunk.slice(0, 160) + '...',
-              score: c.score,
-            })),
-          })
+        if (res.ok) {
+          const groqData = await res.json()
+          const aiAnswer = groqData.choices?.[0]?.message?.content
+          if (aiAnswer) {
+            console.log(`[RAG fallback] Groq answered successfully with ${model}`)
+            return NextResponse.json({
+              answer: aiAnswer,
+              sources: selectedChunks.map(c => ({
+                file_name: doc.file_name,
+                snippet: c.chunk.slice(0, 160) + '...',
+                score: c.score,
+              })),
+            })
+          }
+        } else {
+          const errBody = await res.text().catch(() => 'unknown')
+          console.error(`[RAG fallback] Groq model ${model} returned ${res.status}:`, errBody)
         }
+      } catch (llmErr: any) {
+        console.error(`[RAG fallback] Groq model ${model} threw:`, llmErr?.message || llmErr)
       }
-    } catch (llmErr) {
-      console.error('Groq LLM call error in fallback:', llmErr)
     }
   }
 

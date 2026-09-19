@@ -39,3 +39,20 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python virtual environment (NEVER commit venv to git)
+backend/venv/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SQLite local database
+*.sqlite
+*.db
+
+# Python cache
+*.egg-info/
+dist/

@@ -138,7 +138,9 @@ class SQLiteBrowserClient {
           }),
         })
         const result = await res.json()
-        if (!res.ok) throw new Error(result.error?.message || 'SignUp failed')
+        if (!res.ok || result.error) {
+          throw new Error(result.error?.message || 'SignUp failed')
+        }
         return result
       } catch (err: any) {
         return { data: { user: null }, error: { message: err.message || 'SignUp failed' } }
@@ -156,7 +158,9 @@ class SQLiteBrowserClient {
           }),
         })
         const result = await res.json()
-        if (!res.ok) throw new Error(result.error?.message || 'SignIn failed')
+        if (!res.ok || result.error) {
+          throw new Error(result.error?.message || 'SignIn failed')
+        }
         return result
       } catch (err: any) {
         return { data: { user: null }, error: { message: err.message || 'SignIn failed' } }

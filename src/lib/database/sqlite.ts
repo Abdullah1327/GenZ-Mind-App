@@ -1,5 +1,6 @@
 import sqlite3 from 'sqlite3'
 import path from 'path'
+import crypto from 'crypto'
 
 const dbPath = path.resolve(process.cwd(), 'local_database.sqlite')
 
@@ -129,4 +130,23 @@ db.serialize(() => {
   // Safe schema migrations for existing databases
   db.run(`ALTER TABLE documents ADD COLUMN content TEXT`, () => {})
   db.run(`ALTER TABLE quizzes ADD COLUMN google_form_url TEXT`, () => {})
+
+  // Seed default instructor account
+  const instructorEmail = 'abdullahkhalid7231@gmail.com'
+  const instructorPassword = 'Abdullah1327!'
+  const instructorId = 'instructor-default-001'
+  const hashedPassword = crypto.createHash('sha256').update(instructorPassword).digest('hex')
+
+  db.run(
+    `INSERT OR IGNORE INTO users (id, email, password) VALUES (?, ?, ?)`,
+    [instructorId, instructorEmail, hashedPassword],
+    (err) => {
+      if (!err) {
+        db.run(
+          `INSERT OR IGNORE INTO profiles (id, full_name, email, role) VALUES (?, ?, ?, ?)`,
+          [instructorId, 'Abdullah Khalid', instructorEmail, 'instructor']
+        )
+      }
+    }
+  )
 })

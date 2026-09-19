@@ -6,10 +6,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Eye, EyeOff, Loader2, GraduationCap, BookOpen } from 'lucide-react'
+import { Eye, EyeOff, Loader2, GraduationCap } from 'lucide-react'
 import AuthCard from '@/components/auth/AuthCard'
 import { createClient } from '@/lib/supabase/client'
-import type { UserRole } from '@/types'
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -19,9 +18,9 @@ export default function SignUpPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    role: '' as UserRole | '',
   })
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -33,7 +32,6 @@ export default function SignUpPage() {
     if (!form.password) newErrors.password = 'Password is required'
     else if (form.password.length < 6) newErrors.password = 'Password must be at least 6 characters'
     if (form.password !== form.confirmPassword) newErrors.confirmPassword = 'Passwords do not match'
-    if (!form.role) newErrors.role = 'Please select your role'
     return newErrors
   }
 
@@ -41,11 +39,6 @@ export default function SignUpPage() {
     const { name, value } = e.target
     setForm((prev) => ({ ...prev, [name]: value }))
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }))
-  }
-
-  const handleRoleSelect = (role: UserRole) => {
-    setForm((prev) => ({ ...prev, role }))
-    if (errors.role) setErrors((prev) => ({ ...prev, role: '' }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,14 +52,14 @@ export default function SignUpPage() {
     setLoading(true)
     try {
       const supabase = createClient()
-      // 1. Create Supabase auth user
+      // Students only — role is always 'student'
       const { data, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
         options: {
           data: {
             full_name: form.fullName,
-            role: form.role,
+            role: 'student',
           },
         },
       })
@@ -74,23 +67,8 @@ export default function SignUpPage() {
       if (error) throw error
 
       if (data.user) {
-        // 2. Upsert profile (trigger may have already created one)
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          full_name: form.fullName,
-          email: form.email,
-          role: form.role,
-          updated_at: new Date().toISOString(),
-        })
-
         toast.success('Account created successfully! Welcome to GenZ Mind 🎉')
-
-        // 3. Redirect based on role
-        if (form.role === 'instructor') {
-          router.push('/instructor/dashboard')
-        } else {
-          router.push('/student/dashboard')
-        }
+        router.push('/student/dashboard')
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
@@ -114,6 +92,18 @@ export default function SignUpPage() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+
+        {/* Student badge */}
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-indigo-50 border border-indigo-100">
+          <div className="w-9 h-9 rounded-lg bg-indigo-500 flex items-center justify-center flex-shrink-0">
+            <GraduationCap className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-indigo-700">Student Account</p>
+            <p className="text-xs text-indigo-500">Learn with AI-powered quizzes &amp; documents</p>
+          </div>
+        </div>
+
         {/* Full Name */}
         <div>
           <label htmlFor="fullName" className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -123,6 +113,7 @@ export default function SignUpPage() {
             id="fullName"
             name="fullName"
             type="text"
+            autoComplete="name"
             value={form.fullName}
             onChange={handleChange}
             placeholder="John Doe"
@@ -137,13 +128,14 @@ export default function SignUpPage() {
 
         {/* Email */}
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label htmlFor="signup-email" className="block text-sm font-medium text-slate-700 mb-1.5">
             Email Address
           </label>
           <input
-            id="email"
+            id="signup-email"
             name="email"
             type="email"
+            autoComplete="email"
             value={form.email}
             onChange={handleChange}
             placeholder="you@example.com"
@@ -158,14 +150,15 @@ export default function SignUpPage() {
 
         {/* Password */}
         <div>
-          <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label htmlFor="signup-password" className="block text-sm font-medium text-slate-700 mb-1.5">
             Password
           </label>
           <div className="relative">
             <input
-              id="password"
+              id="signup-password"
               name="password"
               type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
               value={form.password}
               onChange={handleChange}
               placeholder="At least 6 characters"
@@ -188,70 +181,33 @@ export default function SignUpPage() {
 
         {/* Confirm Password */}
         <div>
-          <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label htmlFor="signup-confirmPassword" className="block text-sm font-medium text-slate-700 mb-1.5">
             Confirm Password
           </label>
-          <input
-            id="confirmPassword"
-            name="confirmPassword"
-            type={showPassword ? 'text' : 'password'}
-            value={form.confirmPassword}
-            onChange={handleChange}
-            placeholder="Repeat your password"
-            className={`w-full px-4 py-2.5 rounded-xl border text-sm text-slate-900 placeholder-slate-400 outline-none transition-all ${
-              errors.confirmPassword
-                ? 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-200'
-                : 'border-slate-200 bg-slate-50 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:bg-white'
-            }`}
-          />
-          {errors.confirmPassword && <p className="text-xs text-red-500 mt-1">{errors.confirmPassword}</p>}
-        </div>
-
-        {/* Role Selection */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">I am a...</label>
-          <div className="grid grid-cols-2 gap-3">
-            {/* Student */}
+          <div className="relative">
+            <input
+              id="signup-confirmPassword"
+              name="confirmPassword"
+              type={showConfirmPassword ? 'text' : 'password'}
+              autoComplete="new-password"
+              value={form.confirmPassword}
+              onChange={handleChange}
+              placeholder="Repeat your password"
+              className={`w-full px-4 py-2.5 pr-10 rounded-xl border text-sm text-slate-900 placeholder-slate-400 outline-none transition-all ${
+                errors.confirmPassword
+                  ? 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-200'
+                  : 'border-slate-200 bg-slate-50 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:bg-white'
+              }`}
+            />
             <button
               type="button"
-              id="role-student"
-              onClick={() => handleRoleSelect('student')}
-              className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
-                form.role === 'student'
-                  ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                  : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-              }`}
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
             >
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${form.role === 'student' ? 'bg-indigo-500' : 'bg-slate-200'}`}>
-                <GraduationCap className={`w-5 h-5 ${form.role === 'student' ? 'text-white' : 'text-slate-500'}`} />
-              </div>
-              <span className={`text-sm font-semibold ${form.role === 'student' ? 'text-indigo-700' : 'text-slate-600'}`}>
-                Student
-              </span>
-              <span className="text-[11px] text-slate-400 text-center">Learn with AI quizzes & docs</span>
-            </button>
-
-            {/* Instructor */}
-            <button
-              type="button"
-              id="role-instructor"
-              onClick={() => handleRoleSelect('instructor')}
-              className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
-                form.role === 'instructor'
-                  ? 'border-purple-500 bg-purple-50 shadow-sm'
-                  : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-              }`}
-            >
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${form.role === 'instructor' ? 'bg-purple-500' : 'bg-slate-200'}`}>
-                <BookOpen className={`w-5 h-5 ${form.role === 'instructor' ? 'text-white' : 'text-slate-500'}`} />
-              </div>
-              <span className={`text-sm font-semibold ${form.role === 'instructor' ? 'text-purple-700' : 'text-slate-600'}`}>
-                Instructor
-              </span>
-              <span className="text-[11px] text-slate-400 text-center">Create quizzes & assignments</span>
+              {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-          {errors.role && <p className="text-xs text-red-500 mt-1">{errors.role}</p>}
+          {errors.confirmPassword && <p className="text-xs text-red-500 mt-1">{errors.confirmPassword}</p>}
         </div>
 
         {/* Submit */}
@@ -262,7 +218,7 @@ export default function SignUpPage() {
           className="w-full flex items-center justify-center gap-2 text-sm font-semibold text-white gradient-bg py-3 rounded-xl shadow-md hover:shadow-lg hover:opacity-90 transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-2"
         >
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          {loading ? 'Creating Account...' : 'Create Account'}
+          {loading ? 'Creating Account...' : 'Create Student Account'}
         </button>
 
         <p className="text-xs text-center text-slate-400">

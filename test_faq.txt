@@ -1,0 +1,10 @@
+Invictus Solutions FAQ
+
+Q: What is your company?
+A: Invictus Solutions is a premier technology consulting and AI innovation firm specializing in enterprise software development, automated machine learning pipelines, and digital transformation.
+
+Q: Where is Invictus Solution located?
+A: Invictus Solutions is located at 100 Innovation Boulevard, Tech City, Suite 400. Our international headquarters oversee development hubs in North America and Europe.
+
+Q: What services do you offer?
+A: We provide full-stack cloud applications, custom LLM fine-tuning, intelligent RAG architectures, and data engineering solutions.

@@ -19,10 +19,19 @@ export async function POST(request: NextRequest) {
     const existingUser = await queryGet('SELECT * FROM users WHERE email = ?', [email])
     if (existingUser) {
       return NextResponse.json(
-        { data: { user: null }, error: { message: 'User already exists' } },
+        { data: { user: null }, error: { message: 'User already exists with this email.' } },
         { status: 400 }
       )
     }
+
+    // Only students can self-register. Instructors are pre-seeded.
+    if (role && role !== 'student') {
+      return NextResponse.json(
+        { data: { user: null }, error: { message: 'Only students can create a new account.' } },
+        { status: 403 }
+      )
+    }
+
 
     // Generate UUID
     const userId = crypto.randomUUID()
