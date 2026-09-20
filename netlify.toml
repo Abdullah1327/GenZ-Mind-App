@@ -1,6 +1,12 @@
 [build]
   command = "npm run build"
-  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # "groq" is a provider name that appears naturally in code — not a secret
+  SECRETS_SCAN_OMIT_KEYS = "LLM_PROVIDER"
+  # Backend Python files are not deployed on Netlify, skip scanning them
+  SECRETS_SCAN_OMIT_PATHS = "backend/"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
