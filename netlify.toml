@@ -2,5 +2,12 @@
   command = "npm run build"
   publish = ".next"
 
+[build.environment]
+  # NEXT_PUBLIC_* values are inlined into the client bundle by Next.js by design,
+  # so they will always appear in build output. Exempt them from secrets scanning.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_APP_URL,NEXT_PUBLIC_BACKEND_URL,NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY"
+  # The Next.js/Turbopack cache is a build cache; it is not published or served.
+  SECRETS_SCAN_OMIT_PATHS = ".next/cache/**,.netlify/.next/cache/**"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
