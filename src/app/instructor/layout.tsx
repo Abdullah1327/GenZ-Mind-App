@@ -18,14 +18,15 @@ export default async function InstructorLayout({ children }: { children: React.R
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'instructor') redirect('/student/dashboard')
+  const role = profile?.role || user.user_metadata?.role || 'student'
+  if (role !== 'instructor') redirect('/student/dashboard')
 
   return (
     <div className="flex min-h-screen bg-slate-50">
       <DashboardSidebar
         role="instructor"
-        userName={profile?.full_name}
-        userEmail={profile?.email}
+        userName={profile?.full_name || user.user_metadata?.full_name || 'Instructor'}
+        userEmail={profile?.email || user.email}
       />
       <main className="flex-1 lg:ml-0 pt-14 lg:pt-0 overflow-auto">
         {children}

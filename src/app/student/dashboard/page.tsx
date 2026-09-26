@@ -12,34 +12,45 @@ export default async function StudentDashboardPage() {
 
   if (!user) redirect('/auth/signin')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  let profile = null
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle()
+    profile = data
+  } catch {
+    // ignore query failure
+  }
 
-  // Fetch stats
-  const { count: quizCount } = await supabase
-    .from('quizzes')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id)
+  // Fetch stats safely
+  let quizCount = 0
+  let docCount = 0
+  let avgScore = 0
 
-  const { count: docCount } = await supabase
-    .from('documents')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id)
+  try {
+    const [qRes, dRes, rRes] = await Promise.all([
+      supabase.from('quizzes').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('documents').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('quiz_results').select('percentage').eq('student_id', user.id),
+    ])
+    quizCount = qRes.count ?? 0
+    docCount = dRes.count ?? 0
+    const results = rRes.data ?? []
+    if (results.length > 0) {
+      avgScore = Math.round(
+        results.reduce((sum: number, r: { percentage?: number }) => sum + (r.percentage || 0), 0) / results.length
+      )
+    }
+  } catch {
+    // If tables are empty or being set up, render cleanly with 0
+  }
 
-  const { data: results } = await supabase
-    .from('quiz_results')
-    .select('percentage')
-    .eq('student_id', user.id)
-
-  const avgScore =
-    results && results.length > 0
-      ? Math.round(results.reduce((sum: number, r: { percentage?: number }) => sum + (r.percentage || 0), 0) / results.length)
-      : 0
-
-  const firstName = profile?.full_name?.split(' ')[0] || 'Learner'
+  const firstName =
+    profile?.full_name?.split(' ')[0] ||
+    user.user_metadata?.full_name?.split(' ')[0] ||
+    'Learner'
 
   const stats = [
     { label: 'Quizzes Generated', value: quizCount ?? 0, icon: FileQuestion, color: 'text-indigo-600', bg: 'bg-indigo-50' },
