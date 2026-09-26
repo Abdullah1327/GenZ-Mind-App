@@ -4,14 +4,14 @@ export const dynamic = 'force-dynamic'
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+
 import { toast } from 'sonner'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import AuthCard from '@/components/auth/AuthCard'
 import { createClient } from '@/lib/supabase/client'
 
 export default function SignInPage() {
-  const router = useRouter()
+
 
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPassword, setShowPassword] = useState(false)
@@ -55,11 +55,11 @@ export default function SignInPage() {
         const role = data.user.user_metadata?.role || 'student'
         toast.success('Welcome back! 👋')
 
-        if (role === 'instructor') {
-          router.push('/instructor/dashboard')
-        } else {
-          router.push('/student/dashboard')
-        }
+        // Use window.location.href (full reload) instead of router.push so
+        // Netlify's edge runtime reads the Supabase session cookie before
+        // the server component renders the dashboard.
+        const destination = role === 'instructor' ? '/instructor/dashboard' : '/student/dashboard'
+        window.location.href = destination
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Invalid credentials. Please try again.'
