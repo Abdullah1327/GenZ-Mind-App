@@ -4,23 +4,13 @@ import { createServerClient } from '@supabase/ssr'
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Allow API routes and static assets through immediately
-  if (
-    pathname.startsWith('/api') ||
-    pathname.startsWith('/_next') ||
-    pathname.includes('.')
-  ) {
-    return NextResponse.next()
-  }
-
   let supabaseResponse = NextResponse.next({ request })
 
-  // Safety check: if env vars are missing, let everything through
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
+  // If env vars are missing, let everything through (avoids build-time crash)
   if (!supabaseUrl || !supabaseAnonKey) {
-    console.error('[Middleware] Missing Supabase env vars — skipping auth check')
     return supabaseResponse
   }
 
@@ -44,50 +34,39 @@ export async function middleware(request: NextRequest) {
       },
     })
 
-    // IMPORTANT: getUser() verifies the JWT server-side — do not remove
+    // IMPORTANT: always call getUser() to refresh the session — do not remove
     const { data } = await supabase.auth.getUser()
     user = data.user
-  } catch (err) {
-    // If session check fails, treat as unauthenticated but don't crash
-    console.error('[Middleware] Session check failed:', err)
+  } catch {
+    // Session check failed — treat as unauthenticated, let layout handle it
     user = null
   }
 
-  const userRole: string = user?.user_metadata?.role || 'student'
-
-  // Public routes — always accessible
   const publicRoutes = ['/', '/auth/signin', '/auth/signup']
   const isPublicRoute = publicRoutes.includes(pathname)
+  const isApiRoute = pathname.startsWith('/api')
+
+  // Always allow API routes through
+  if (isApiRoute) {
+    return supabaseResponse
+  }
 
   // Not logged in → redirect to sign in (only for protected routes)
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth/signin'
-    // Clear the target param to avoid redirect loops
-    url.searchParams.delete('redirectedFrom')
     return NextResponse.redirect(url)
   }
 
-  // Logged in but on auth pages → redirect to their dashboard
-  if (user && isPublicRoute && pathname !== '/') {
+  // Logged in but visiting sign-in or sign-up → redirect to sign in page
+  // NOTE: Role-based routing (student vs instructor) is handled by the
+  // individual layouts which read from the profiles table — NOT the middleware.
+  // Doing role checks here based on user_metadata alone causes redirect loops
+  // for seeded/admin instructor accounts that don't have metadata.role set.
+  if (user && (pathname === '/auth/signin' || pathname === '/auth/signup')) {
     const url = request.nextUrl.clone()
-    url.pathname = userRole === 'instructor' ? '/instructor/dashboard' : '/student/dashboard'
+    url.pathname = '/student/dashboard' // layouts will redirect instructors correctly
     return NextResponse.redirect(url)
-  }
-
-  // Role-based protection — only redirect if we're CERTAIN about the role
-  if (user && userRole) {
-    if (pathname.startsWith('/student') && userRole === 'instructor') {
-      const url = request.nextUrl.clone()
-      url.pathname = '/instructor/dashboard'
-      return NextResponse.redirect(url)
-    }
-
-    if (pathname.startsWith('/instructor') && userRole === 'student') {
-      const url = request.nextUrl.clone()
-      url.pathname = '/student/dashboard'
-      return NextResponse.redirect(url)
-    }
   }
 
   return supabaseResponse
@@ -95,13 +74,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder assets
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
