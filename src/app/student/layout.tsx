@@ -12,11 +12,17 @@ export default async function StudentLayout({ children }: { children: React.Reac
 
   if (!user) redirect('/auth/signin')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  let profile = null
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle()
+    profile = data
+  } catch {
+    // Profile query failed — fall back to user_metadata
+  }
 
   const role = profile?.role || user.user_metadata?.role || 'student'
   if (role === 'instructor') redirect('/instructor/dashboard')
