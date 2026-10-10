@@ -233,7 +233,7 @@ export default function StudentDocumentsPage() {
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
             <h2 className="text-sm font-bold text-slate-900 mb-3 flex items-center justify-between">
               <span>Upload Study Materials</span>
-              <span className="text-[11px] text-slate-400 font-normal">PDF, TXT, DOCX</span>
+              <span className="text-[11px] text-slate-400 font-normal">PDF, TXT, DOCX, PPT</span>
             </h2>
 
             <label className="border-2 border-dashed border-cyan-200 bg-cyan-50/40 hover:bg-cyan-50/80 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors group">
@@ -250,7 +250,7 @@ export default function StudentDocumentsPage() {
               <p className="text-[11px] text-slate-400 mt-0.5">Maximum file size: 10MB</p>
               <input
                 type="file"
-                accept=".pdf,.txt,.docx,.md"
+                accept=".pdf,.txt,.docx,.doc,.md,.ppt,.pptx"
                 onChange={handleFileUpload}
                 disabled={uploading}
                 className="hidden"
@@ -403,7 +403,18 @@ export default function StudentDocumentsPage() {
                         : 'gradient-bg text-white shadow-sm'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                    <div
+                      className="whitespace-pre-wrap"
+                      dangerouslySetInnerHTML={{
+                        __html: msg.content
+                          // code spans first (before bold/italic)
+                          .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>')
+                          // bold **text**
+                          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                          // italic *text* (only single asterisks not already consumed)
+                          .replace(/\*([^*\n]+)\*/g, '<em>$1</em>'),
+                      }}
+                    />
 
                     {/* Sources Badge */}
                     {msg.sources && msg.sources.length > 0 && (
